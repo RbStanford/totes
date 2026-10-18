@@ -388,11 +388,13 @@ function renderTote(d) {
   addBtn.addEventListener('click', addItemSheet);
   var nfcBtn = h('button', { type: 'button', class: 'btn primary', text: '🏷 Write NFC tag' });
   nfcBtn.addEventListener('click', nfcSheet);
+  var manyBtn = h('button', { type: 'button', class: 'btn wide', text: '🖼 Add several photos at once' });
+  manyBtn.addEventListener('click', function () { addManyPhotos(d.items.length); });
   var list = d.items.length
     ? d.items.map(itemCard)
     : h('div', { class: 'empty' }, h('div', { class: 'big', text: '📥' }), h('p', { text: 'Nothing in this tote yet.' }));
   main.replaceChildren(
-    h('div', { class: 'actions-row' }, nfcBtn, addBtn),
+    h('div', { class: 'actions-row' }, nfcBtn, addBtn, manyBtn),
     h('div', { class: 'section-title', text: d.items.length + (d.items.length === 1 ? ' item' : ' items') + (d.updated ? ' · updated ' + d.updated : '') }),
     h('div', null, list));
 }
@@ -411,6 +413,25 @@ function startTote(id) {
       nfcSheet();
     }
   }).catch(fail);
+}
+
+// Pick several photos from the gallery: each becomes an item, oldest photo first.
+function addManyPhotos(existing) {
+  var input = h('input', { type: 'file', accept: 'image/*', multiple: true });
+  input.addEventListener('change', function () {
+    var files = Array.prototype.slice.call(input.files).sort(function (a, b) { return a.lastModified - b.lastModified; });
+    if (!files.length) return;
+    var i = 0, added = 0;
+    (function next() {
+      if (i >= files.length) { toast('Added ' + added + (added === 1 ? ' item' : ' items')); return; }
+      toast('Adding photo ' + (i + 1) + ' of ' + files.length + '…');
+      shrink(files[i]).then(function (data) {
+        return call({ action: 'addItem', t: TOTE, item: 'New item ' + (existing + i + 1), qty: 1, detail: 'Needs a description', photo: data }, true);
+      }).then(function (d) { renderTote(d); added++; i++; next(); })
+        .catch(function (e) { fail(e); if (added) renderTote(DATA); });
+    })();
+  });
+  input.click();
 }
 
 function addItemSheet() {
