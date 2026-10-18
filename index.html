@@ -29,6 +29,10 @@
   .add input[type=text] { width: 100%; box-sizing: border-box; margin-bottom: 6px; }
   #q { width: 100%; box-sizing: border-box; font-size: 1.1em; padding: 10px; }
   .where { font-size: 0.9em; }
+  details.nfc { margin: 0 0 12px; font-size: 0.9em; }
+  details.nfc summary { cursor: pointer; color: #0b57d0; }
+  details.nfc .row { margin-top: 6px; flex-wrap: nowrap; }
+  details.nfc input { flex: 1; min-width: 0; font-size: 0.85em; }
   [hidden] { display: none !important; }
 </style>
 </head>
@@ -45,6 +49,13 @@
   <h1 id="title">Loading...</h1>
   <div class="meta"><a href="./">Search all totes</a></div>
   <div class="meta" id="meta"></div>
+  <details class="nfc">
+    <summary>NFC tag address</summary>
+    <div class="row">
+      <input id="nfcUrl" type="text" readonly>
+      <button id="copyBtn" type="button">Copy</button>
+    </div>
+  </details>
   <div id="items"></div>
   <form id="addForm" class="add" hidden>
     <strong>Add an item</strong>
@@ -243,6 +254,13 @@ function render(d) {
 function startTote(id) {
   TOTE = id;
   $('toteView').hidden = false;
+  var tagUrl = location.origin + location.pathname + '?t=' + id;
+  $('nfcUrl').value = tagUrl;
+  $('copyBtn').addEventListener('click', function () {
+    var done = function () { $('copyBtn').textContent = 'Copied'; setTimeout(function () { $('copyBtn').textContent = 'Copy'; }, 2000); };
+    var fallback = function () { $('nfcUrl').select(); $('nfcUrl').setSelectionRange(0, 999); try { document.execCommand('copy'); done(); } catch (e) { fail(new Error('Press and hold the address to copy it')); } };
+    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(tagUrl).then(done, fallback); else fallback();
+  });
   $('photoPicker').addEventListener('change', function (ev) {
     var f = ev.target.files[0];
     ev.target.value = '';
