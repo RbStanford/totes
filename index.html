@@ -330,15 +330,12 @@ function startHome() {
 
 function newToteSheet(nextId) {
   var name = h('input', { type: 'text', maxlength: '100', placeholder: 'e.g. Camping gear', autocomplete: 'off' });
-  var loc = h('input', { type: 'text', maxlength: '100', placeholder: 'e.g. Garage shelf 2', autocomplete: 'off' });
-  try { loc.value = localStorage.getItem('lastLocation') || ''; } catch (e) {}
   var save = h('button', { type: 'button', class: 'btn primary block', text: 'Create ' + nextId });
   save.addEventListener('click', function () {
-    var n = name.value.trim(), l = loc.value.trim();
-    if (!n || !l) { toast('Enter a name and a location', true); return; }
+    var n = name.value.trim();
+    if (!n) { toast('Enter a name', true); return; }
     save.disabled = true;
-    call({ action: 'createTote', t: nextId, name: n, location: l }).then(function () {
-      try { localStorage.setItem('lastLocation', l); } catch (e) {}
+    call({ action: 'createTote', t: nextId, name: n }).then(function () {
       location.href = '?t=' + nextId + '&tag=1';
     }).catch(function (e) { save.disabled = false; fail(e); });
   });
@@ -346,7 +343,6 @@ function newToteSheet(nextId) {
     h('h2', { text: 'New tote' }),
     h('p', { class: 'muted', style: 'margin:0 0 12px' }, 'It will be ', h('b', { text: nextId }), '. Next you can write its NFC sticker.'),
     h('label', { class: 'field' }, h('span', { text: 'Name' }), name),
-    h('label', { class: 'field' }, h('span', { text: 'Location' }), loc),
     save));
   setTimeout(function () { name.focus(); }, 150);
 }
