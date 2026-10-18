@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Totes</title>
+<style>
+  body { font-family: sans-serif; margin: 0; padding: 16px; max-width: 600px; background: #f6f6f6; }
+  h1 { font-size: 1.4em; margin: 0 0 4px; }
+  .meta { color: #555; font-size: 0.9em; margin-bottom: 12px; }
+  #status { color: #555; font-size: 0.9em; min-height: 1.2em; margin: 6px 0; }
+  #err { color: #b00020; min-height: 1.2em; }
+  .card { display: flex; gap: 12px; background: #fff; border: 1px solid #ddd; border-radius: 8px;
+          padding: 10px; margin-bottom: 10px; }
+  .thumb { width: 96px; height: 96px; flex: none; border-radius: 6px; background: #e8e8e8;
+           display: flex; align-items: center; justify-content: center; color: #999;
+           font-size: 0.8em; overflow: hidden; }
+  .thumb img { width: 100%; height: 100%; object-fit: cover; }
+  .body { flex: 1; min-width: 0; }
+  .name { font-weight: bold; font-size: 1.05em; }
+  .detail { color: #444; font-size: 0.9em; margin: 2px 0 6px; white-space: pre-wrap; }
+  .row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  input, button { font-size: 1em; padding: 8px; }
+  input.qty { width: 4em; }
+  button.small { font-size: 0.85em; padding: 6px 8px; }
+  .edit { display: none; margin-top: 8px; }
+  .edit input[type=text] { width: 100%; box-sizing: border-box; margin-bottom: 6px; }
+  .add { background: #fff; border: 1px solid #ddd; border-radius: 8px; padding: 10px; margin-top: 16px; }
+  .add input[type=text] { width: 100%; box-sizing: border-box; margin-bottom: 6px; }
+  #q { width: 100%; box-sizing: border-box; font-size: 1.1em; padding: 10px; }
+  .where { font-size: 0.9em; }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+
+<section id="searchView" hidden>
+  <h1>Search totes</h1>
+  <input id="q" type="search" placeholder="e.g. USB Type-C cable" autocomplete="off">
+  <div id="sStatus" class="meta"></div>
+  <div id="results"></div>
+</section>
+
+<section id="toteView" hidden>
+  <h1 id="title">Loading...</h1>
+  <div class="meta"><a href="./">Search all totes</a></div>
+  <div class="meta" id="meta"></div>
+  <div id="items"></div>
+  <form id="addForm" class="add" hidden>
+    <strong>Add an item</strong>
+    <input type="text" name="item" placeholder="Item" maxlength="100" required>
+    <input type="text" name="detail" placeholder="Detail (optional)" maxlength="200">
+    <div class="row">
+      <input name="qty" class="qty" type="number" min="0" max="9999" value="1" required>
+      <input type="file" name="photo" accept="image/*">
+      <button type="submit">Add</button>
+    </div>
+  </form>
+  <form id="createForm" class="add" hidden>
+    <input type="text" name="name" placeholder="Tote name" maxlength="100" required>
+    <input type="text" name="location" placeholder="Location" maxlength="100" required>
+    <button type="submit">Create tote</button>
+  </form>
+  <input type="file" id="photoPicker" accept="image/*" hidden>
+</section>
+
+<div id="status"></div>
+<div id="err"></div>
+
+<script>
+var API = 'https://script.google.com/macros/s/AKfycbyrIXo0ApuL5HZNZiUsGF4fRC55eI-2-vl1mHbbn27Jpy0l6zF7WeIaybkVdfV_vh86/exec';
+var $ = function (id) { return document.getElementById(id); };
+var params = new URLSearchParams(location.search);
+
+function el(tag, cls, text) {
+  var e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (text !== undefined) e.textContent = text;
+  return e;
+}
+
+function fail(e) { $('status').textContent = ''; $('err').textContent = e && e.message ? e.message : String(e); }
+
+// Cookies are omitted on purpose: Google rejects script.google.com requests that carry a sign-in session.
+function call(p, post) {
+  $('err').textContent = '';
+  $('status').textContent = 'Working...';
+  var req = post
+    ? fetch(API, { method: 'POST', credentials: 'omit', headers: { 'Content-Type': 'text/plain' }, body: JSON.stringify(p) })
+    : fetch(API + '?' + new URLSearchParams(p), { credentials: 'omit' });
+  return req.then(function (r) { return r.json(); }).then(function (d) {
+    $('status').textContent = '';
+    if (d.error) throw new Error(d.error);
+    return d;
+  });
+}
+
+function shrink(file, cb) {
+  var reader = new FileReader();
+  reader.onload = function () {
+    var img = new Image();
+    img.onload = function () {
+      var s = Math.min(1, 1024 / Math.max(img.width, img.height));
+      var c = document.createElement('canvas');
+      c.width = Math.round(img.width * s);
+      c.height = Math.round(img.height * s);
+      c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+      cb(c.toDataURL('image/jpeg', 0.8));
+    };
+    img.onerror = function () { fail(new Error('Could not read that photo')); };
+    img.src = reader.result;
+  };
+  reader.readAsDataURL(file);
+}
+
+function thumbBox(size, it) {
+  var thumb = el('div', 'thumb');
+  thumb.style.width = thumb.style.height = size + 'px';
+  if (it.thumbUrl) {
+    var a = document.createElement('a');
+    a.href = it.viewUrl; a.target = '_blank';
+    var img = document.createElement('img');
+    img.src = it.thumbUrl; img.alt = it.item;
+    a.appendChild(img); thumb.appendChild(a);
+  } else {
+    thumb.textContent = 'No photo';
+  }
+  return thumb;
+}
+
+/* ---------- search view ---------- */
+var timer = null, seq = 0;
+
+function resultCard(r) {
+  var c = el('div', 'card');
+  c.appendChild(thumbBox(80, r));
+  var body = el('div', 'body');
+  body.appendChild(el('div', 'name', r.item + '  x' + r.quantity));
+  if (r.detail) body.appendChild(el('div', 'detail', r.detail));
+  var where = el('div', 'where');
+  var link = document.createElement('a');
+  link.href = '?t=' + encodeURIComponent(r.toteId);
+  link.textContent = r.toteId + ' - ' + r.toteName;
+  where.appendChild(link);
+  where.appendChild(document.createTextNode(r.location ? ' | ' + r.location : ''));
+  body.appendChild(where);
+  c.appendChild(body);
+  return c;
+}
+
+function runSearch() {
+  var q = $('q').value;
+  var mine = ++seq;
+  history.replaceState(null, '', q.trim() ? '?q=' + encodeURIComponent(q) : location.pathname);
+  if (q.trim() === '') { $('results').textContent = ''; $('sStatus').textContent = ''; return; }
+  $('sStatus').textContent = 'Searching...';
+  call({ action: 'search', q: q }).then(function (d) {
+    if (mine !== seq) return;
+    $('results').textContent = '';
+    $('sStatus').textContent = d.count === 0 ? 'Nothing found.' : d.count + (d.count === 1 ? ' result' : ' results');
+    d.results.forEach(function (r) { $('results').appendChild(resultCard(r)); });
+  }).catch(fail);
+}
+
+function startSearch() {
+  $('searchView').hidden = false;
+  $('q').value = params.get('q') || '';
+  $('q').addEventListener('input', function () { clearTimeout(timer); timer = setTimeout(runSearch, 300); });
+  if ($('q').value) runSearch();
+}
+
+/* ---------- tote view ---------- */
+var TOTE = null;
+var pickerTarget = null;
+
+function act(p) { return call(Object.assign({ t: TOTE }, p)).then(render).catch(fail); }
+
+function itemCard(it) {
+  var c = el('div', 'card');
+  c.appendChild(thumbBox(96, it));
+  var body = el('div', 'body');
+  body.appendChild(el('div', 'name', it.item));
+  body.appendChild(el('div', 'detail', it.detail));
+
+  var row = el('div', 'row');
+  var q = el('input', 'qty'); q.type = 'number'; q.min = 0; q.max = 9999; q.value = it.quantity;
+  q.addEventListener('change', function () { act({ action: 'setQuantity', row: it.rowNumber, qty: q.value }); });
+  var edit = el('button', 'small', 'Edit');
+  row.appendChild(el('span', '', 'Qty')); row.appendChild(q); row.appendChild(edit);
+  body.appendChild(row);
+
+  var panel = el('div', 'edit');
+  var nameIn = el('input'); nameIn.type = 'text'; nameIn.maxLength = 100; nameIn.value = it.item;
+  var detIn = el('input'); detIn.type = 'text'; detIn.maxLength = 200; detIn.value = it.detail;
+  detIn.placeholder = 'Detail (optional)';
+  var save = el('button', 'small', 'Save');
+  save.addEventListener('click', function () {
+    act({ action: 'updateDetails', row: it.rowNumber, item: nameIn.value, detail: detIn.value });
+  });
+  var photo = el('button', 'small', it.photoId ? 'Change photo' : 'Add photo');
+  photo.addEventListener('click', function () { pickerTarget = it.rowNumber; $('photoPicker').click(); });
+  var prow = el('div', 'row');
+  prow.appendChild(save); prow.appendChild(photo);
+  if (it.photoId) {
+    var rm = el('button', 'small', 'Remove photo');
+    rm.addEventListener('click', function () { act({ action: 'clearPhoto', row: it.rowNumber }); });
+    prow.appendChild(rm);
+  }
+  var del = el('button', 'small', 'Delete item');
+  del.addEventListener('click', function () {
+    if (confirm('Delete ' + it.item + '?')) act({ action: 'removeItem', row: it.rowNumber });
+  });
+  prow.appendChild(del);
+  panel.appendChild(nameIn); panel.appendChild(detIn); panel.appendChild(prow);
+  body.appendChild(panel);
+  edit.addEventListener('click', function () {
+    panel.style.display = panel.style.display === 'block' ? 'none' : 'block';
+  });
+
+  c.appendChild(body);
+  return c;
+}
+
+function render(d) {
+  $('err').textContent = '';
+  $('items').textContent = '';
+  if (!d.exists) {
+    $('title').textContent = TOTE + ' not found';
+    $('meta').textContent = 'This tote is not in the sheet yet.';
+    $('addForm').hidden = true;
+    $('createForm').hidden = false;
+    return;
+  }
+  $('createForm').hidden = true;
+  $('addForm').hidden = false;
+  document.title = d.id + ' ' + d.name;
+  $('title').textContent = d.id + ' - ' + d.name;
+  $('meta').textContent = d.location + (d.notes ? ' | ' + d.notes : '') + (d.updated ? ' | updated ' + d.updated : '');
+  if (d.items.length === 0) $('items').appendChild(el('p', '', 'No items yet.'));
+  d.items.forEach(function (it) { $('items').appendChild(itemCard(it)); });
+}
+
+function startTote(id) {
+  TOTE = id;
+  $('toteView').hidden = false;
+  $('photoPicker').addEventListener('change', function (ev) {
+    var f = ev.target.files[0];
+    ev.target.value = '';
+    if (!f || pickerTarget === null) return;
+    var row = pickerTarget;
+    shrink(f, function (dataUrl) {
+      call({ action: 'setPhoto', t: TOTE, row: row, photo: dataUrl }, true).then(render).catch(fail);
+    });
+  });
+  $('addForm').addEventListener('submit', function (ev) {
+    ev.preventDefault();
+    var f = ev.target;
+    function send(dataUrl) {
+      var p = { action: 'addItem', t: TOTE, item: f.item.value, qty: f.qty.value, detail: f.detail.value };
+      if (dataUrl) p.photo = dataUrl;
+      call(p, !!dataUrl).then(function (d) { f.reset(); f.qty.value = 1; render(d); }).catch(fail);
+    }
+    var file = f.photo.files[0];
+    if (file) shrink(file, send); else send('');
+  });
+  $('createForm').addEventListener('submit', function (ev) {
+    ev.preventDefault();
+    var f = ev.target;
+    act({ action: 'createTote', name: f.name.value, location: f.location.value });
+  });
+  call({ action: 'tote', t: id }).then(render).catch(fail);
+}
+
+var t = (params.get('t') || '').trim().toUpperCase();
+if (/^T-\d{3}$/.test(t)) startTote(t); else startSearch();
+</script>
+</body>
+</html>
