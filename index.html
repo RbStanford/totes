@@ -289,9 +289,14 @@ function startHome() {
   var input = h('input', { type: 'search', placeholder: 'Search every tote', autocomplete: 'off', 'aria-label': 'Search' });
   var results = h('div');
   var tiles = h('div');
+  var info = { nextId: 'T-001', totes: [] };
+  var readBtn = h('button', { type: 'button', class: 'btn primary', text: '📖 Read tag' });
+  var writeBtn = h('button', { type: 'button', class: 'btn primary', text: '🏷 Write tag' });
+  readBtn.addEventListener('click', readTagSheet);
+  writeBtn.addEventListener('click', function () { writePickerSheet(info); });
   $('main').replaceChildren(
+    h('div', { class: 'actions-row' }, readBtn, writeBtn),
     h('div', { class: 'search' }, h('span', { class: 'mag', text: '🔍' }), input), results, tiles);
-  var info = { nextId: 'T-001' };
 
   function runSearch() {
     var q = input.value, mine = ++seq;
@@ -313,6 +318,7 @@ function startHome() {
 
   call({ action: 'totes' }).then(function (d) {
     info.nextId = d.nextId;
+    info.totes = d.totes;
     if (!d.totes.length) {
       tiles.replaceChildren(h('div', { class: 'empty' }, h('div', { class: 'big', text: '📦' }), h('p', { text: 'No totes yet. Tap New tote to start.' })));
     } else {
@@ -387,7 +393,7 @@ function renderTote(d) {
   var addBtn = h('button', { type: 'button', class: 'btn', text: '＋ Add item' });
   addBtn.addEventListener('click', addItemSheet);
   var nfcBtn = h('button', { type: 'button', class: 'btn primary', text: '🏷 Write NFC tag' });
-  nfcBtn.addEventListener('click', nfcSheet);
+  nfcBtn.addEventListener('click', function () { nfcSheet(TOTE); });
   var manyBtn = h('button', { type: 'button', class: 'btn wide', text: '🖼 Add several photos at once' });
   manyBtn.addEventListener('click', function () { addManyPhotos(d.items.length); });
   var list = d.items.length
@@ -410,7 +416,7 @@ function startTote(id) {
   loadTote().then(function () {
     if (params.get('tag') === '1' && DATA && DATA.exists) {
       history.replaceState(null, '', '?t=' + id);
-      nfcSheet();
+      nfcSheet(id);
     }
   }).catch(fail);
 }
@@ -492,9 +498,72 @@ function editItemSheet(it) {
     photo.node, rmPhoto, h('div', { class: 'stack' }, save, del)));
 }
 
+/* ---------- home: read a tag, pick a tote to write ---------- */
+function writePickerSheet(info) {
+  if (!info.totes.length) { toast('Totes are still loading. Try again in a moment.', true); return; }
+  var rows = info.totes.map(function (t) {
+    var b = h('button', { type: 'button', class: 'btn block', style: 'justify-content:flex-start;text-align:left;margin-bottom:8px;min-height:54px' },
+      h('span', { class: 'chip', text: t.id }), h('span', { text: t.name }));
+    b.addEventListener('click', function () { closeSheet(); nfcSheet(t.id); });
+    return b;
+  });
+  var add = h('button', { type: 'button', class: 'btn primary block', text: '＋ New tote' });
+  add.addEventListener('click', function () { closeSheet(); newToteSheet(info.nextId); });
+  openSheet(h('div', null, h('h2', { text: 'Write a tag for which tote?' }), rows, add));
+}
+
+function readTagSheet() {
+  var supported = 'NDEFReader' in window;
+  var ctl = null;
+  var box = h('div', { class: 'nfc-state' });
+  function stop() { if (ctl) { try { ctl.abort(); } catch (e) {} ctl = null; } }
+  function btn(label, cls, fn) { return h('button', { type: 'button', class: 'btn ' + (cls || ''), text: label, onclick: fn }); }
+  function view(icon, cls, title, text, buttons) {
+    box.replaceChildren(
+      h('div', { class: 'nfc-icon ' + cls, text: icon }),
+      h('h3', { text: title }),
+      text ? h('p', { text: text }) : null,
+      h('div', { class: 'stack' }, buttons || []));
+  }
+  function scan() {
+    stop(); ctl = new AbortController();
+    view('📲', 'wait', 'Hold phone to the sticker', 'Reading the tag…', [btn('Cancel', '', closeSheet)]);
+    var ndef = new NDEFReader();
+    ndef.scan({ signal: ctl.signal }).then(function () {
+      ndef.onreading = function (ev) {
+        var rec = ev.message.records[0], data = '';
+        try { data = new TextDecoder().decode(rec.data); } catch (e) {}
+        stop();
+        var m = data.indexOf(BASE) === 0 ? /[?&]t=(T-\d{3})/.exec(data) : null;
+        if (m) {
+          view('✓', 'ok', 'Tote ' + m[1], 'Opening it…', [btn('Open now', 'primary', function () { location.href = BASE + '?t=' + m[1]; })]);
+          setTimeout(function () { location.href = BASE + '?t=' + m[1]; }, 700);
+        } else if (!data) {
+          view('✗', 'bad', 'This tag is empty', 'Nothing is written on it yet. Use Write tag to set it up.', [btn('Scan again', 'primary', scan), btn('Close', '', closeSheet)]);
+        } else {
+          view('✗', 'bad', 'Not a tote tag', data.replace(/^https?:\/\//, ''), [btn('Scan again', 'primary', scan), btn('Close', '', closeSheet)]);
+        }
+      };
+      ndef.onreadingerror = function () {
+        stop();
+        view('✗', 'bad', 'Could not read the tag', 'Hold it steady against the back of the phone and try again.', [btn('Try again', 'primary', scan), btn('Close', '', closeSheet)]);
+      };
+    }).catch(function (e) {
+      if (e && e.name === 'AbortError') return;
+      view('✗', 'bad', 'Could not start NFC', (e && e.name === 'NotAllowedError') ? 'NFC permission was denied. Allow NFC for this site in Chrome and try again.' : 'Turn NFC on in the phone settings and try again.', [btn('Close', '', closeSheet)]);
+    });
+  }
+  if (!supported) {
+    view('⚠', 'bad', 'Can’t read tags here', 'Tag reading works in Chrome on an Android phone with NFC turned on. You can also just tap a sticker with the screen on and it opens its tote.', [btn('Close', '', closeSheet)]);
+  } else {
+    scan();
+  }
+  openSheet(h('div', null, box), stop);
+}
+
 /* ---------- NFC tag: write, verify, lock ---------- */
-function nfcSheet() {
-  var tagUrl = BASE + '?t=' + TOTE;
+function nfcSheet(toteId) {
+  var tagUrl = BASE + '?t=' + toteId;
   var supported = 'NDEFReader' in window;
   var canLock = supported && 'makeReadOnly' in NDEFReader.prototype;
   var ctl = null;
@@ -520,7 +589,7 @@ function nfcSheet() {
         btn('Close', '', closeSheet)]);
       return;
     }
-    view('🏷', '', 'Write the tag for ' + TOTE, 'Tap Write, then hold the back of your phone against the sticker.', [
+    view('🏷', '', 'Write the tag for ' + toteId, 'Tap Write, then hold the back of your phone against the sticker.', [
       btn('Write tag', 'primary', doWrite), btn('Check a tag', '', doVerify), btn('Close', '', closeSheet)]);
   }
 
@@ -562,7 +631,7 @@ function nfcSheet() {
         } else if (!data) {
           view('✗', 'bad', 'Tag is empty', 'Nothing readable is on this sticker yet.', [btn('Write it', 'primary', doWrite), btn('Close', '', closeSheet)]);
         } else {
-          view('✗', 'bad', 'Wrong address on tag', data.replace(/^https:\/\//, ''), [btn('Write ' + TOTE + ' over it', 'primary', doWrite), btn('Close', '', closeSheet)]);
+          view('✗', 'bad', 'Wrong address on tag', data.replace(/^https:\/\//, ''), [btn('Write ' + toteId + ' over it', 'primary', doWrite), btn('Close', '', closeSheet)]);
         }
       };
       ndef.onreadingerror = function () {
